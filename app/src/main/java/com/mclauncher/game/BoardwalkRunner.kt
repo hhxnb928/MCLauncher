@@ -147,7 +147,7 @@ class BoardwalkRunner(private val context: Context) {
             Thread.sleep(2000)
             if (process?.isAlive == true) {
                 _state.value = State.RUNNING
-                appendLog("✅ 游戏进程已启动 (PID ${process?.pid()})")
+                appendLog("✅ 游戏进程已启动 (PID ${-1})")
                 appendLog("")
                 appendLog("════════════════════════════════")
                 appendLog("  游戏正在运行...")
