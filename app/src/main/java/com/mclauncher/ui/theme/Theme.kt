@@ -14,6 +14,7 @@ import androidx.core.view.WindowCompat
 // MC 主题色
 val MC_GREEN = Color(0xFF4DBD2D)
 val MC_GREEN_DARK = Color(0xFF3A9121)
+val MC_YELLOW = Color(0xFFFFB020)
 val MC_BLACK = Color(0xFF1A1A1A)
 val MC_PANEL = Color(0xFF242424)
 val MC_BORDER = Color(0xFF333333)
