@@ -76,7 +76,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
     
     // Boardwalk (Pojav 的运行层 - 核心！)
-    implementation("fr.labomg.biometric:core:1.8.0")
+    // implementation("fr.labomg.biometric:core:1.8.0") // 暂时注释 - 需要手动集成 .so
+
     
     // 无障碍服务
     implementation("androidx.accessibilityservice:accessibilityservice:1.1.0")
