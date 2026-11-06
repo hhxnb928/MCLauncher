@@ -188,9 +188,13 @@ fun VersionRow(version: MojangVersion, isLatest: Boolean, isInstalling: Boolean,
 private suspend fun installVersion(versionId: String, onProgress: (InstallProgress) -> Unit) {
     try {
         onProgress(InstallProgress(step = InstallStep.CACHING_MANIFEST, stepName = "下载版本清单..."))
-        val versionJsonStr = MojangApi.cacheVersionJson(versionId) ?: run {
-            onProgress(InstallProgress(step = InstallStep.ERROR, stepName = "版本清单下载失败")); return }
-        val versionJson = JSONObject(versionJsonStr)
+        
+        // 修: cacheVersionJson 返回 File, 需要 readText()
+        val jsonFile = MojangApi.cacheVersionJson(versionId)
+        if (!jsonFile.exists()) {
+            onProgress(InstallProgress(step = InstallStep.ERROR, stepName = "版本清单下载失败")); return
+        }
+        val versionJson = JSONObject(jsonFile.readText())
 
         onProgress(InstallProgress(step = InstallStep.DOWNLOADING_CLIENT, stepName = "下载游戏主包...", overallProgress = 0.05f))
         val clientUrl = versionJson.optJSONObject("downloads")?.optJSONObject("client")?.optString("url")
