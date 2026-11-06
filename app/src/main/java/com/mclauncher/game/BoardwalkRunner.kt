@@ -3,28 +3,30 @@ package com.mclauncher.game
 import android.content.Context
 import android.util.Log
 import com.mclauncher.MCApplication
+import com.mclauncher.data.JreManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
 
 /**
- * BoardwalkRunner — 用 Pojav 的 GL4ES + LWJGL Native 跑 MC
+ * 真实游戏启动器
  *
- * 架构:
- *   1. 把 Minecraft main class 作为 JVM 入口
- *   2. LWJGL 通过 java.library.path 加载 liblwjgl.so / liblwjgl_opengl.so
- *   3. OpenGL 调用 → GL4ES (libgl4es_114.so) → OpenGL ES → GPU
- *   4. 音频走 libopenal.so, 字体走 libfreetype.so
+ * 1. 检查 JRE (JRE 8 for mc<1.17, JRE 17 for mc>=1.17)
+ * 2. 构建 Java 命令行
+ * 3. exec java 进程
+ * 4. 环境变量 LD_LIBRARY_PATH = 我们的 native libs + GL4ES + OpenAL
  *
- * 注意: 当前阶段没有打包 JRE (OpenJDK), 所以只能显示日志界面
+ * 关键环境变量:
+ *   LD_LIBRARY_PATH -> libgl4es_114.so + liblwjgl_*.so + libopenal.so
+ *   LIBGL_ALWAYS_SOFTWARE=0 -> 让 GL4ES 走硬件 GLES
  */
 class BoardwalkRunner(private val context: Context) {
 
-    companion object {
-        private const val TAG = "BoardwalkRunner"
-    }
+    companion object { private const val TAG = "MCLauncher" }
 
     private val _log = MutableStateFlow<List<String>>(emptyList())
     val log: StateFlow<List<String>> = _log
@@ -32,71 +34,131 @@ class BoardwalkRunner(private val context: Context) {
     private val _state = MutableStateFlow(State.IDLE)
     val state: StateFlow<State> = _state
 
-    enum class State { IDLE, CHECKING, STARTING, RUNNING, CRASHED, STOPPED }
+    enum class State { IDLE, CHECKING, JRE_MISSING, STARTING, RUNNING, CRASHED, STOPPED }
 
     private var process: Process? = null
     private var readerThread: Thread? = null
 
     private fun appendLog(msg: String) {
-        val safe = try { msg } catch (e: Exception) { "(log error)" }
-        _log.value = _log.value + safe
-        Log.d(TAG, safe)
+        _log.value = _log.value + msg
+        Log.d(TAG, msg)
     }
 
     suspend fun launch(config: LaunchConfig): Boolean = withContext(Dispatchers.IO) {
         try {
             _state.value = State.CHECKING
-            appendLog("========================================")
-            appendLog("🎮 MCLauncher Game Session")
-            appendLog("========================================")
-            appendLog("版本: ${config.versionId}")
-            appendLog("主类: ${config.mainClass}")
+            appendLog("╔══════════════════════════════════╗")
+            appendLog("║  MCLauncher - Game Session       ║")
+            appendLog("╚══════════════════════════════════╝")
             appendLog("")
 
-            // 检查 native libs
+            // 1. 检查版本文件
+            val versionDir = File(MCApplication.versionsDir(), config.versionId)
+            val versionJson = File(versionDir, "${config.versionId}.json")
+            val versionJar = File(versionDir, "${config.versionId}.jar")
+            appendLog("📦 版本: ${config.versionId}")
+            appendLog("  JSON: ${if (versionJson.exists()) "✅" else "❌"}")
+            appendLog("  JAR: ${if (versionJar.exists()) "✅" else "❌"}")
+            if (!versionJson.exists() || !versionJar.exists()) {
+                appendLog("❌ 版本未安装! 请先在[版本管理]安装")
+                _state.value = State.CRASHED; return@withContext false
+            }
+            appendLog("")
+
+            // 2. 检查 JRE
+            val jreVer = JreManager.recommendJre(config.versionId)
+            appendLog("☕ JRE: $jreVer")
+            appendLog("  已安装: ${if (JreManager.isInstalled(jreVer)) "✅" else "❌"}")
+
+            if (!JreManager.isInstalled(jreVer)) {
+                appendLog("")
+                appendLog("⚠️ JRE 未安装! 这是启动游戏的关键!")
+                appendLog("   请在 [设置] 页面下载 Java Runtime")
+                _state.value = State.JRE_MISSING; return@withContext false
+            }
+
+            val javaBin = File(JreManager.jreDir(jreVer), "bin/java")
+            if (!javaBin.exists()) {
+                // 尝试其他路径
+                val candidates = listOf("bin/java", "java", "bin/art", "lib/server/libjvm.so")
+                for (c in candidates) {
+                    if (File(JreManager.jreDir(jreVer), c).exists()) {
+                        appendLog("  找到: $c")
+                        break
+                    }
+                }
+            }
+            appendLog("")
+
+            // 3. 检查 Native libs
             val nativeDir = context.applicationInfo.nativeLibraryDir
-            val natives = listOf(
-                "liblwjgl.so",
-                "liblwjgl_opengl.so",
-                "libgl4es_114.so",
-                "libopenal.so",
-                "libfreetype.so"
-            )
-            appendLog("📁 Native libs ($nativeDir):")
-            for (n in natives) {
+            val keyLibs = listOf("liblwjgl.so", "liblwjgl_opengl.so", "libgl4es_114.so", "libopenal.so")
+            appendLog("🔧 Native libs ($nativeDir):")
+            for (n in keyLibs) {
                 val f = File(nativeDir, n)
-                appendLog("  ${if (f.exists()) "✅" else "❌"} $n ${if (f.exists()) "(${(f.length()/1024).toInt()}KB)" else ""}")
+                appendLog("  ${if (f.exists()) "✅" else "❌"} $n")
             }
             appendLog("")
 
-            // 检查 Java (Android 用 Zygote, 我们没法直接调 java 命令)
-            // 真正的运行需要打包 OpenJDK Android port (100MB+)
-            appendLog("⚠️ 当前阶段: 无法直接执行 Java main class")
-            appendLog("   Android 没有原生 java 命令, 需要:")
-            appendLog("   1. 打包 OpenJDK Android port (Pojav 的做法)")
-            appendLog("   2. 或用 Termux 里的 java (用户自行安装)")
+            // 4. 构建 Java 命令
+            _state.value = State.STARTING
+            appendLog("▶ 构建命令行...")
+            appendLog("  主类: ${config.mainClass}")
+            appendLog("  classpath 长度: ${config.classpath.length} chars")
+
+            val javaCmd = mutableListOf<String>()
+            javaCmd += javaBin.absolutePath
+            javaCmd += config.jvmArgs
+            javaCmd += "-cp"; javaCmd += config.classpath
+            javaCmd += config.mainClass
+            javaCmd += config.gameArgs
+
+            appendLog("  参数: ${javaCmd.size} 个")
             appendLog("")
 
-            // 检查游戏数据
-            val mcDir = MCApplication.mcDir()
-            val versionsDir = MCApplication.versionsDir()
-            val versionDir = File(versionsDir, config.versionId)
-            appendLog("📂 游戏数据:")
-            appendLog("  .minecraft: ${mcDir.exists()} ${mcDir.absolutePath}")
-            appendLog("  versions: ${versionDir.exists()} ${versionDir.absolutePath}")
-            appendLog("  libraries: ${MCApplication.librariesDir().exists()}")
-            appendLog("  assets: ${MCApplication.assetsDir().exists()}")
-            appendLog("")
+            // 5. 启动进程
+            appendLog("🚀 启动 Java 进程...")
+            val builder = ProcessBuilder(javaCmd)
+            builder.directory(MCApplication.mcDir())
+            builder.redirectErrorStream(true)
+            builder.environment().apply {
+                put("HOME", MCApplication.gameDir.absolutePath)
+                put("LD_LIBRARY_PATH", nativeDir + ":" + File(nativeDir).parentFile?.absolutePath)
+                put("LIBGL_ALWAYS_SOFTWARE", "0")
+                put("MESA_LOADER_DRIVER_OVERRIDE", "virpipe")
+                put("ANDROID_DATA", "/data")
+                put("EXTERNAL_STORAGE", "/sdcard")
+                put("JAVA_HOME", JreManager.jreDir(jreVer).absolutePath)
+                put("PATH", "${JreManager.jreDir(jreVer).absolutePath}/bin:/system/bin")
+            }
 
-            if (!versionDir.exists()) {
-                appendLog("❌ 版本 ${config.versionId} 未安装!")
-                appendLog("   请先在 [版本管理] 里点击 [安装]")
+            process = builder.start()
+
+            readerThread = Thread {
+                try {
+                    BufferedReader(InputStreamReader(process!!.inputStream)).useLines { lines ->
+                        lines.forEach { line -> appendLog(line) }
+                    }
+                } catch (_: Exception) {}
+            }
+            readerThread?.start()
+
+            // 等待 Java 启动
+            Thread.sleep(2000)
+            if (process?.isAlive == true) {
+                _state.value = State.RUNNING
+                appendLog("✅ 游戏进程已启动 (PID ${process?.pid()})")
+                appendLog("")
+                appendLog("════════════════════════════════")
+                appendLog("  游戏正在运行...")
+                appendLog("  返回键可停止")
+                appendLog("════════════════════════════════")
+            } else {
+                val exit = process?.waitFor()
+                appendLog("❌ Java 进程退出码: $exit")
+                appendLog("   (查看上方日志找原因)")
                 _state.value = State.CRASHED
-                return@withContext false
             }
-
-            _state.value = State.RUNNING
-            appendLog("✅ Runner 就绪 (等待 JRE 集成)")
             true
 
         } catch (e: Exception) {
@@ -111,15 +173,14 @@ class BoardwalkRunner(private val context: Context) {
     fun stop() {
         try {
             process?.destroy()
+            process?.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            process?.destroyForcibly()
             process = null
             readerThread?.interrupt()
-            readerThread = null
             _state.value = State.STOPPED
-            appendLog("⏹ 已停止")
-        } catch (e: Exception) {
-            Log.e(TAG, "stop", e)
-        }
+            appendLog("⏹ 游戏进程已停止")
+        } catch (_: Exception) {}
     }
 
-    fun isRunning(): Boolean = _state.value == State.RUNNING
+    fun isRunning() = _state.value == State.RUNNING
 }
