@@ -2,6 +2,7 @@ package com.mclauncher.game
 
 import android.content.Context
 import com.mclauncher.MCApplication
+import com.mclauncher.data.AccountManager
 import com.mclauncher.data.LocalVersion
 import com.mclauncher.data.LoaderType
 import org.json.JSONObject
@@ -9,8 +10,7 @@ import java.io.File
 import java.util.UUID
 
 class GameSession {
-    
-    // ========== 启动参数构建 ==========
+
     fun buildLaunchArgs(
         context: Context,
         version: LocalVersion,
@@ -21,51 +21,54 @@ class GameSession {
         val versionDir = File(versionsDir, version.id)
         val versionJsonFile = File(versionDir, "${version.id}.json")
         if (!versionJsonFile.exists()) {
-            throw IllegalStateException("版本 JSON 不存在: ${version.id}")
+            throw IllegalStateException("版本 ${version.id} 未安装! 请先在[版本管理]点击安装")
         }
         val json = JSONObject(versionJsonFile.readText())
-        
-        // ========== 主类名 ==========
+
         val mainClass = when (version.loader) {
             LoaderType.VANILLA -> json.optString("mainClass", "net.minecraft.client.main.Main")
             LoaderType.FABRIC -> "net.fabricmc.loader.impl.launch.knot.KnotClient"
             LoaderType.FORGE, LoaderType.NEOFORGE -> json.optString("mainClass", "cpw.mods.modlauncher.Launcher")
             LoaderType.QUILT -> "org.quiltmc.loader.impl.launch.knot.KnotClient"
         }
-        
-        // ========== JVM 参数 ==========
+
         val jvmArgs = mutableListOf<String>()
-        
-        // 内存
-        jvmArgs += "-Xms${memoryMB}m"
+        jvmArgs += "-Xms${(memoryMB / 4).coerceAtLeast(256)}m"
         jvmArgs += "-Xmx${memoryMB}m"
-        
-        // Boardwalk 转译必需参数
-        jvmArgs += "-XX:+UseZGC"
-        jvmArgs += "-XX:+ZGenerational"
-        jvmArgs += "-XX:+UseCompressedOops"
-        jvmArgs += "-XX:MaxRAM=${memoryMB}m"
-        
-        // LWJGL 相关系统属性
-        val nativesDir = MCApplication.nativesDir()
-        jvmArgs += "-Djava.library.path=${nativesDir.absolutePath}"
-        jvmArgs += "-Dorg.lwjgl.librarypath=${nativesDir.absolutePath}"
-        
-        // Minecraft 必需的系统属性
+        jvmArgs += "-XX:+UseG1GC"
+        jvmArgs += "-XX:+ParallelRefProcEnabled"
+        jvmArgs += "-XX:MaxGCPauseMillis=200"
+        jvmArgs += "-XX:+UnlockExperimentalVMOptions"
+        jvmArgs += "-XX:+DisableExplicitGC"
+        jvmArgs += "-XX:G1NewSizePercent=30"
+        jvmArgs += "-XX:G1MaxNewSizePercent=40"
+        jvmArgs += "-XX:G1HeapRegionSize=8M"
+        jvmArgs += "-XX:G1ReservePercent=20"
+        jvmArgs += "-XX:G1HeapWastePercent=5"
+        jvmArgs += "-XX:G1MixedGCCountTarget=4"
+        jvmArgs += "-XX:InitiatingHeapOccupancyPercent=15"
+        jvmArgs += "-XX:G1MixedGCLiveThresholdPercent=90"
+        jvmArgs += "-XX:G1RSetUpdatingPauseTimePercent=5"
+        jvmArgs += "-XX:SurvivorRatio=32"
+        jvmArgs += "-XX:+PerfDisableSharedMem"
+        jvmArgs += "-XX:MaxTenuringThreshold=1"
+
+        val nativesDir = context.applicationInfo.nativeLibraryDir
+        jvmArgs += "-Djava.library.path=$nativesDir:${MCApplication.nativesDir()}"
+        jvmArgs += "-Dorg.lwjgl.librarypath=${MCApplication.nativesDir()}"
+        jvmArgs += "-Dorg.lwjgl.opengl.egl.display=$nativesDir/libEGL.so"
+        jvmArgs += "-Dorg.lwjgl.opengl.gles2.display=$nativesDir/libGLESv2.so"
         jvmArgs += "-Dminecraft.launcher.brand=MCLauncher"
-        jvmArgs += "-Dminecraft.launcher.version=1.0.0"
-        jvmArgs += "-Dminecraft.client.jar=${File(versionDir, "${version.id}.jar").absolutePath}"
+        jvmArgs += "-Dminecraft.launcher.version=1.0.0-Android"
         jvmArgs += "-Djava.net.preferIPv4Stack=true"
-        
-        // 自定义参数
+        jvmArgs += "-Dos.name=Linux"
+        jvmArgs += "-Dos.arch=aarch64"
+        jvmArgs += "-Dfile.encoding=UTF-8"
         jvmArgs += customJvmArgs
-        
-        // ========== 类路径 ==========
+
         val classpath = buildClasspath(json, version)
-        
-        // ========== 游戏参数 ==========
-        val gameArgs = buildGameArgs(json, version)
-        
+        val gameArgs = buildGameArgs(version)
+
         return LaunchConfig(
             versionId = version.id,
             mainClass = mainClass,
@@ -74,23 +77,21 @@ class GameSession {
             gameArgs = gameArgs
         )
     }
-    
+
     private fun buildClasspath(versionJson: JSONObject, version: LocalVersion): String {
         val paths = mutableListOf<String>()
         val versionsDir = MCApplication.versionsDir()
         val librariesDir = MCApplication.librariesDir()
-        
+
         // MC 主 jar
         val versionJar = File(File(versionsDir, version.id), "${version.id}.jar")
         if (versionJar.exists()) paths += versionJar.absolutePath
-        
+
         // 依赖库
         val libraries = versionJson.optJSONArray("libraries")
         if (libraries != null) {
             for (i in 0 until libraries.length()) {
                 val lib = libraries.getJSONObject(i)
-                
-                // 跳过被排除的库
                 val rules = lib.optJSONArray("rules")
                 if (rules != null) {
                     var allowed = true
@@ -99,13 +100,11 @@ class GameSession {
                         val action = rule.optString("action", "allow")
                         val os = rule.optJSONObject("os")
                         val name = os?.optString("name")
-                        if (action == "disallow" && (name == null || name == "linux")) {
-                            allowed = false
-                        }
+                        if (action == "disallow" && (name == null || name == "linux")) allowed = false
+                        if (action == "allow" && name != null && name != "linux") allowed = false
                     }
                     if (!allowed) continue
                 }
-                
                 val artifact = lib.optJSONObject("downloads")
                     ?.optJSONObject("artifact") ?: continue
                 val path = artifact.optString("path") ?: continue
@@ -113,43 +112,34 @@ class GameSession {
                 if (file.exists()) paths += file.absolutePath
             }
         }
-        
-        // 模组加载器 jar
-        when (version.loader) {
-            LoaderType.FABRIC -> {
-                val fabricJar = File(librariesDir, "net/fabricmc/fabric-loader/${version.loaderVersion}/fabric-loader-${version.loaderVersion}.jar")
-                if (fabricJar.exists()) paths += fabricJar.absolutePath
-            }
-            LoaderType.FORGE, LoaderType.NEOFORGE -> {
-                // Forge jar 在版本目录下
-                val forgeJar = File(File(versionsDir, version.id), "forge-${version.loaderVersion}.jar")
-                if (forgeJar.exists()) paths += forgeJar.absolutePath
-            }
-            else -> {}
-        }
-        
+
+        // Loader jar
+        val loaderJar = File(librariesDir, "fabric-loader-*.jar")
+        if (loaderJar.exists()) paths += loaderJar.absolutePath
+
         return paths.joinToString(File.pathSeparator)
     }
-    
-    private fun buildGameArgs(versionJson: JSONObject, version: LocalVersion): List<String> {
-        val args = mutableListOf<String>()
+
+    private fun buildGameArgs(version: LocalVersion): List<String> {
+        val account = AccountManager.active()
+        val name = account?.name ?: "Player"
+        val uuid = account?.uuid ?: UUID.randomUUID().toString()
+        val token = account?.offlineAccessToken ?: ""
         val mcDir = MCApplication.mcDir().absolutePath
-        
-        // 基础参数
-        args += "--username"; args += "Player"
-        args += "--version"; args += version.id
-        args += "--gameDir"; args += mcDir
-        args += "--assetsDir"; args += MCApplication.assetsDir().absolutePath
-        args += "--assetIndex"; args += version.id
-        args += "--accessToken"; args += ""
-        args += "--uuid"; args += UUID.randomUUID().toString()
-        args += "--userType"; args += "mojang"
-        
-        // 窗口设置
-        args += "--width"; args += "1280"
-        args += "--height"; args += "720"
-        
-        return args
+
+        return listOf(
+            "--username", name,
+            "--version", version.id,
+            "--gameDir", mcDir,
+            "--assetsDir", MCApplication.assetsDir().absolutePath,
+            "--assetIndex", version.id,
+            "--accessToken", token,
+            "--uuid", uuid,
+            "--userType", "offline",
+            "--versionType", "MCLauncher",
+            "--width", "1280",
+            "--height", "720"
+        )
     }
 }
 
