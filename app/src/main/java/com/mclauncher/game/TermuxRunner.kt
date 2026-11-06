@@ -143,7 +143,7 @@ class TermuxRunner(private val context: Context) {
             Thread.sleep(1500)
             if (process?.isAlive == true) {
                 _state.value = State.RUNNING
-                appendLog("✅ 游戏进程已启动 (PID ${process?.pid()})")
+                appendLog("✅ 游戏进程已启动 (PID ${process?.let { -1 }})")
             } else {
                 appendLog("❌ 进程瞬间退出!")
                 _state.value = State.CRASHED
