@@ -17,11 +17,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mclauncher.data.*
 import com.mclauncher.ui.theme.*
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import org.json.JSONArray
 
 enum class InstallStep {
     IDLE, CACHING_MANIFEST, DOWNLOADING_CLIENT, DOWNLOADING_LIBS,
@@ -45,7 +48,7 @@ fun VersionManagerScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var tabIndex by remember { mutableStateOf(0) }
     var installingId by remember { mutableStateOf<String?>(null) }
-    var progress by remember { mutableStateOf(InstallProgress()) }
+    val progress = remember { mutableStateOf(InstallProgress()) }
     val scope = rememberCoroutineScope()
     val tabs = listOf("Release", "Snapshot", "旧版")
 
@@ -91,7 +94,7 @@ fun VersionManagerScreen() {
         }
 
         if (installingId != null) {
-            InstallProgressCard(progress = progress)
+            InstallProgressCard(progress = progress.value)
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -107,18 +110,14 @@ fun VersionManagerScreen() {
                         version = v,
                         isLatest = v.id == mf.latest.release || v.id == mf.latest.snapshot,
                         isInstalling = installingId == v.id,
-                        installProgress = if (installingId == v.id) progress else null,
+                        installProgress = if (installingId == v.id) progress.value else null,
                         onInstall = {
                             installingId = v.id
-                            progress = InstallProgress()
-                            scope.launch {
-                                installVersion(v.id, onProgress = { p ->
-                                    withContext(Dispatchers.Main) { progress = p }
-                                })
-                                withContext(Dispatchers.Main) {
-                                    installingId = null
-                                    progress = InstallProgress()
-                                }
+                            progress.value = InstallProgress()
+                            scope.launch(Dispatchers.IO) {
+                                installVersion(v.id, onProgress = { p -> progress.value = p })
+                                installingId = null
+                                progress.value = InstallProgress()
                             }
                         }
                     )
@@ -251,8 +250,8 @@ private suspend fun installVersion(versionId: String, onProgress: (InstallProgre
             val objects = JSONObject(idxFile.readText()).optJSONObject("objects")
             if (objects != null) {
                 val keyList = mutableListOf<String>()
-                val it = objects.keys()
-                while (it.hasNext()) keyList.add(it.next())
+                val iterator = objects.keys()
+                while (iterator.hasNext()) keyList.add(iterator.next())
                 val totalAssets = keyList.size
                 var done = 0
                 for (key in keyList) {
