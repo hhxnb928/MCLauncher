@@ -72,7 +72,7 @@ class GameActivity : ComponentActivity() {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF141414)),
-                shape = MaterialTheme.shapes.none
+                shape = RoundedCornerShape(0.dp)
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
