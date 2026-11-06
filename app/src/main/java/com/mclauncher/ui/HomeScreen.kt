@@ -1,5 +1,6 @@
 package com.mclauncher.ui
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,312 +17,219 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mclauncher.data.LocalVersion
-import com.mclauncher.data.LoaderType
+import com.mclauncher.data.*
+import com.mclauncher.game.GameActivity
 import com.mclauncher.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(onLaunchGame: (String) -> Unit) {
-    var selectedVersion by remember { mutableStateOf<LocalVersion?>(null) }
-    var launching by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
-    var progressText by remember { mutableStateOf("准备就绪") }
+    val scope = rememberCoroutineScope()
+    var accounts by remember { mutableStateOf(AccountManager.list()) }
+    var activeAccount by remember { mutableStateOf(AccountManager.active()) }
+    var versions by remember { mutableStateOf<List<LocalVersion>>(emptyList()) }
+    var showCreateAccount by remember { mutableStateOf(false) }
+    var newAccountName by remember { mutableStateOf("") }
 
-    val versions = remember {
-        listOf(
-            LocalVersion("1.21.1", "release", installed = true),
-            LocalVersion("1.20.6-Fabric", "release", installed = true, loader = LoaderType.FABRIC, loaderVersion = "0.16.5"),
-            LocalVersion("1.20.1-Forge", "release", installed = true, loader = LoaderType.FORGE, loaderVersion = "47.4.0"),
-        )
-    }
-
-    // 默认选第一个已安装的
+    // 加载本地版本
     LaunchedEffect(Unit) {
-        selectedVersion = versions.firstOrNull { it.installed }
+        versions = loadLocalVersions()
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(MC_BLACK).padding(24.dp)
-    ) {
-        // ========== 顶部欢迎 ==========
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+    Column(modifier = Modifier.fillMaxSize().background(MC_BLACK).padding(24.dp)) {
+        Text("欢迎回来，矿工！⛏️", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // ========== 账户卡片 ==========
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
         ) {
-            Text(
-                "欢迎回来，矿工！⛏️",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.CHINA)
-                    .format(java.util.Date()),
-                color = MC_TEXT_SECONDARY,
-                fontSize = 13.sp
-            )
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Person, null, tint = MC_GREEN, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("👤 账户", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showCreateAccount = true }) {
+                        Icon(Icons.Default.Add, null, tint = MC_GREEN, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("新建", color = MC_GREEN)
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (accounts.isEmpty()) {
+                    Text("暂无账户，点击新建创建离线账户", color = MC_TEXT_SECONDARY, fontSize = 13.sp)
+                } else {
+                    accounts.forEach { acc ->
+                        val isActive = acc.name == activeAccount?.name
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { AccountManager.setActive(acc.name); activeAccount = AccountManager.active() }
+                                .padding(vertical = 6.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                if (isActive) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                null,
+                                tint = if (isActive) MC_GREEN else MC_TEXT_SECONDARY
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(acc.name, color = Color.White, fontSize = 14.sp)
+                                Text("${acc.uuid.take(8)}...", color = MC_TEXT_SECONDARY, fontSize = 11.sp)
+                            }
+                            IconButton(onClick = { AccountManager.remove(acc.name); accounts = AccountManager.list() }) {
+                                Icon(Icons.Default.Delete, null, tint = Color.Red.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        // ========== 版本卡片 ==========
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Inventory2, null, tint = MC_GREEN, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("📦 已安装版本", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
 
-        // ========== 版本选择卡片（大） ==========
-        selectedVersion?.let { ver ->
-            VersionBigCard(
-                version = ver,
-                isSelected = true,
-                onClick = { /* 版本管理页面 */ }
-            )
+                if (versions.isEmpty()) {
+                    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("暂无版本，请先在 [版本管理] 安装", color = MC_TEXT_SECONDARY, fontSize = 13.sp)
+                    }
+                } else {
+                    versions.forEach { v ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.size(40.dp).background(MC_GREEN.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("MC", color = MC_GREEN, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(v.id, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text("✅ 已安装", color = MC_GREEN, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        // ========== JRE 状态 ==========
+        val jre8Ok = JreManager.isInstalled("jre8")
+        val jre17Ok = JreManager.isInstalled("jre17")
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text("☕ Java 运行环境", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (jre8Ok) Icons.Default.CheckCircle else Icons.Default.ErrorOutline, null,
+                        tint = if (jre8Ok) MC_GREEN else Color.Red, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("JRE 8 (MC <1.17)", color = if (jre8Ok) Color.White else Color.Red, fontSize = 13.sp)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (jre17Ok) Icons.Default.CheckCircle else Icons.Default.ErrorOutline, null,
+                        tint = if (jre17Ok) MC_GREEN else Color.Red, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("JRE 17 (MC ≥1.17)", color = if (jre17Ok) Color.White else Color.Red, fontSize = 13.sp)
+                }
+                if (!jre8Ok || !jre17Ok) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("💡 在 [设置] 页面下载 JRE", color = MC_TEXT_SECONDARY, fontSize = 11.sp)
+                }
+            }
+        }
 
         // ========== 启动按钮 ==========
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Button(
-                onClick = {
-                    if (!launching && selectedVersion != null) {
-                        launching = true
-                        progressText = "正在下载依赖库..."
+        val launchEnabled = versions.isNotEmpty() && activeAccount != null
+        Button(
+            onClick = {
+                versions.firstOrNull()?.let { v ->
+                    onLaunchGame(v.id)
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            enabled = launchEnabled,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MC_GREEN,
+                disabledContainerColor = Color(0xFF333333)
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (launchEnabled) "🚀 启动游戏" else "需要安装版本 + 账户",
+                color = if (launchEnabled) Color.White else MC_TEXT_SECONDARY, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
 
-                        // 模拟启动进度
-                        Thread {
-                            for (i in 1..10) {
-                                Thread.sleep(200)
-                                progress = i / 10f
-                                val steps = listOf(
-                                    "正在下载依赖库...",
-                                    "检查 Java 环境...",
-                                    "加载游戏版本...",
-                                    "初始化模组加载器...",
-                                    "加载模组...",
-                                    "构建类路径...",
-                                    "准备渲染引擎...",
-                                    "启动游戏进程...",
-                                )
-                                progressText = steps.getOrNull(i - 1) ?: "启动完成！"
-                            }
-                            Thread.sleep(500)
-                            launching = false
-                            progress = 0f
-                            progressText = "准备就绪"
-
-                            // 启动游戏 Activity
-                            onLaunchGame(selectedVersion!!.id)
-                        }.start()
+        // 新建账户对话框
+        if (showCreateAccount) {
+            AlertDialog(
+                onDismissRequest = { showCreateAccount = false },
+                title = { Text("创建离线账户") },
+                text = {
+                    Column {
+                        Text("输入游戏名字 (无需 Mojang 账号)", color = MC_TEXT_SECONDARY, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = newAccountName,
+                            onValueChange = { newAccountName = it },
+                            label = { Text("玩家名字") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 },
-                enabled = !launching && selectedVersion != null,
-                modifier = Modifier
-                    .width(280.dp)
-                    .height(72.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (launching) Color(0xFF3A9121) else MC_GREEN,
-                    disabledContainerColor = Color(0xFF333333)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (launching) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                    } else {
-                        Icon(
-                            Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = Color.White
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                    }
-                    Text(
-                        if (launching) "启动中..." else "启动游戏",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 进度条
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.width(280.dp).height(4.dp),
-                color = MC_GREEN,
-                trackColor = Color(0xFF333333)
-            )
-
-            Text(
-                progressText,
-                color = MC_TEXT_SECONDARY,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // ========== 已安装版本快速切换 ==========
-        Text(
-            "🔄 快速切换版本",
-            color = Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(versions) { ver ->
-                VersionQuickRow(
-                    version = ver,
-                    isSelected = selectedVersion?.id == ver.id,
-                    onClick = { selectedVersion = ver }
-                )
-            }
-        }
-    }
-}
-
-// 大版本卡片
-@Composable
-fun VersionBigCard(version: LocalVersion, isSelected: Boolean, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
-    ) {
-        Row(
-            modifier = Modifier.padding(24.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 版本图标（渐变方块）
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .background(
-                        when (version.loader) {
-                            LoaderType.FABRIC -> Color(0xFFDBD0B4)
-                            LoaderType.FORGE -> Color(0xFFD57F2C)
-                            LoaderType.NEOFORGE -> Color(0xFFC9B26B)
-                            else -> MC_GREEN
-                        },
-                        RoundedCornerShape(12.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    when (version.loader) {
-                        LoaderType.FABRIC -> "🧵"
-                        LoaderType.FORGE -> "⚒"
-                        LoaderType.NEOFORGE -> "🔨"
-                        else -> "⛏"
-                    },
-                    fontSize = 36.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.width(20.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Minecraft ${version.id}",
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Badge(
-                        containerColor = when (version.loader) {
-                            LoaderType.VANILLA -> MC_GREEN
-                            LoaderType.FABRIC -> Color(0xFFDBD0B4)
-                            LoaderType.FORGE -> Color(0xFFD57F2C)
-                            else -> ACCENT_PURPLE
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (newAccountName.isNotBlank()) {
+                            AccountManager.addOffline(newAccountName.trim())
+                            accounts = AccountManager.list()
+                            activeAccount = AccountManager.active()
                         }
-                    ) {
-                        Text(
-                            when (version.loader) {
-                                LoaderType.VANILLA -> "原版"
-                                LoaderType.FABRIC -> "Fabric"
-                                LoaderType.FORGE -> "Forge"
-                                LoaderType.NEOFORGE -> "NeoForge"
-                                LoaderType.QUILT -> "Quilt"
-                            },
-                            fontSize = 11.sp
-                        )
-                    }
-
-                    if (version.loaderVersion.isNotEmpty()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "Loader ${version.loaderVersion}",
-                            color = MC_TEXT_SECONDARY,
-                            fontSize = 12.sp
-                        )
-                    }
+                        newAccountName = ""
+                        showCreateAccount = false
+                    }) { Text("创建") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCreateAccount = false }) { Text("取消") }
                 }
-
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    if (version.installed) "✅ 已安装" else "⬇️ 未安装",
-                    color = if (version.installed) MC_GREEN else ACCENT_ORANGE,
-                    fontSize = 13.sp
-                )
-            }
-
-            Icon(
-                Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MC_TEXT_SECONDARY,
-                modifier = Modifier.size(28.dp)
             )
         }
     }
 }
 
-// 快速切换行
-@Composable
-fun VersionQuickRow(version: LocalVersion, isSelected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                if (isSelected) Color(0xFF2A2A2A) else Color(0xFF1E1E1E),
-                RoundedCornerShape(10.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            Icons.Default.CheckCircle,
-            contentDescription = null,
-            tint = if (isSelected) MC_GREEN else Color(0xFF444444),
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            version.id,
-            color = Color.White,
-            fontSize = 15.sp
-        )
-        Spacer(modifier = Modifier.weight(1f))
-        Text(
-            when (version.loader) {
-                LoaderType.VANILLA -> "原版"
-                LoaderType.FABRIC -> "Fabric"
-                LoaderType.FORGE -> "Forge"
-                else -> version.loader.name
-            },
-            color = MC_TEXT_SECONDARY,
-            fontSize = 12.sp
-        )
-    }
+private suspend fun loadLocalVersions(): List<LocalVersion> = withContext(Dispatchers.IO) {
+    try {
+        val dir = com.mclauncher.MCApplication.versionsDir()
+        dir.listFiles()?.filter { it.isDirectory }?.map { d ->
+            LocalVersion(id = d.name, type = "release", installed = true)
+        }?.toList() ?: emptyList()
+    } catch (e: Exception) { emptyList() }
 }
