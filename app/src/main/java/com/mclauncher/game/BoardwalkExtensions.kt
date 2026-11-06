@@ -18,7 +18,7 @@ fun BoardwalkRunner.sendKeyEvent(keyCode: Int, action: Int) {
             KeyEvent.KEYCODE_D -> "D"
             KeyEvent.KEYCODE_SPACE -> "SPACE"
             KeyEvent.KEYCODE_SHIFT_LEFT -> "LSHIFT"
-            KeyEvent.KEYCODE_CONTROL_LEFT -> "LCTRL"
+            KeyEvent.KEYCODE_CTRL_LEFT -> "LCTRL"
             KeyEvent.KEYCODE_ESCAPE -> "ESCAPE"
             KeyEvent.KEYCODE_TAB -> "TAB"
             KeyEvent.KEYCODE_E -> "E"
