@@ -83,7 +83,7 @@ fun VirtualJoystick(
                     onDragCancel = { dragging = false; offset = IntOffset.Zero },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        val max = size / 2
+                        val max = size / 2f
                         val nx = (offset.x + dragAmount.x).coerceIn(-max, max)
                         val ny = (offset.y + dragAmount.y).coerceIn(-max, max)
                         offset = IntOffset(nx.roundToInt(), ny.roundToInt())
@@ -218,7 +218,7 @@ data class KeyboardConfig(
             KeyMapping("F", android.view.KeyEvent.KEYCODE_F, pos = 0.82f to 0.5f),  // 切换视角
             KeyMapping("空格", android.view.KeyEvent.KEYCODE_SPACE, pos = 0.5f to 0.85f),
             KeyMapping("Shift", android.view.KeyEvent.KEYCODE_SHIFT_LEFT, pos = 0.12f to 0.82f),
-            KeyMapping("Ctrl", android.view.KeyEvent.KEYCODE_CONTROL_LEFT, pos = 0.05f to 0.85f), // 疾跑
+            KeyMapping("Ctrl", android.view.KeyEvent.KEYCODE_CTRL_LEFT, pos = 0.05f to 0.85f), // 疾跑
             KeyMapping("Esc", android.view.KeyEvent.KEYCODE_ESCAPE, pos = 0.95f to 0.05f),
             KeyMapping("Tab", android.view.KeyEvent.KEYCODE_TAB, pos = 0.9f to 0.05f),   // 物品搜索
         )
