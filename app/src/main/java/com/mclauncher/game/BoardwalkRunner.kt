@@ -49,9 +49,9 @@ class BoardwalkRunner(private val context: Context) {
             cmd += boardwalkBin.absolutePath
             cmd += "--"
             cmd += config.mainClass
-            cmd += *config.jvmArgs.toTypedArray()
+            cmd.addAll(config.jvmArgs)
             cmd += "-cp"; cmd += config.classpath
-            cmd += *config.gameArgs.toTypedArray()
+            cmd.addAll(config.gameArgs)
             
             appendLog("执行: ${cmd.joinToString(" ") { if (it.length > 100) "...(截断)" else it }}")
             
