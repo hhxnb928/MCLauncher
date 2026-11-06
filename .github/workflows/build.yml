@@ -1,0 +1,120 @@
+name: Build MCLauncher APK
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '**.kt'
+      - '**.xml'
+      - '**.kts'
+      - 'gradle.properties'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      build_type:
+        description: '构建类型'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - debug
+          - release
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.build_type || 'debug' }} APK
+    runs-on: ubuntu-latest
+    
+    steps:
+      # ========== Step 1: 检出代码 ==========
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      # ========== Step 2: 设置 JDK 17 ==========
+      - name: ☕ Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+          gradle-version: '8.7'
+          
+      # ========== Step 3: 设置 Android SDK ==========
+      - name: 📱 Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0'
+          
+      # ========== Step 4: 生成 Gradle Wrapper ==========
+      - name: 🔧 Generate Gradle Wrapper
+        run: |
+          chmod +x gradlew || true
+          chmod +x gradlew.bat || true
+          # 如果没有 wrapper，下载 gradle
+          if [ ! -f gradlew ]; then
+            curl -L https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
+            unzip gradle.zip
+            ./gradle-8.7/bin/gradle wrapper --gradle-version 8.7
+            rm -rf gradle-8.7 gradle.zip
+          fi
+          
+      # ========== Step 5: Build APK ==========
+      - name: 🏗️ Build Debug APK
+        if: github.event.inputs.build_type != 'release'
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        
+      - name: 🏗️ Build Release APK
+        if: github.event.inputs.build_type == 'release'
+        run: |
+          # 创建 release keystore（GitHub Secrets 里配好的话用 secrets.KEYSTORE_BASE64）
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/release.keystore
+            echo "storeFile=/tmp/release.keystore" > keystore.properties
+            echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> keystore.properties
+            echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> keystore.properties
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> keystore.properties
+          fi
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          
+      # ========== Step 6: 上传 APK 到 Artifacts ==========
+      - name: 📤 Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLauncher-APK-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          
+      # ========== Step 7: 生成 Release 草稿（push 到 main 时） ==========
+      - name: 🚀 Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: MCLauncher v${{ github.run_number }}
+          body: |
+            ## 🎉 MCLauncher v${{ github.run_number }}
+            
+            ### 更新日志
+            - 初始版本：Pojav 风格的 Minecraft Java 启动器
+            - ✅ 版本管理（Mojang manifest 拉取）
+            - ✅ 模组商店（Modrinth API）
+            - ✅ 皮肤管理
+            - ✅ 触屏按键映射
+            - ✅ Java 设置（内存/JVM 参数）
+            - ✅ PCL 风格深色 UI
+            
+            ### 下载
+            请查看下方 Artifacts
+            
+            ### 安装说明
+            1. 下载 APK
+            2. 允许未知来源安装
+            3. 授予存储权限（MANAGE_EXTERNAL_STORAGE）
+            4. 授予无障碍服务权限（悬浮按键）
+          files: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          fail_on_unmatched_files: false
