@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 
 enum class InstallStep {
     IDLE, CACHING_MANIFEST, DOWNLOADING_CLIENT, DOWNLOADING_LIBS,
@@ -108,10 +109,16 @@ fun VersionManagerScreen() {
                         isInstalling = installingId == v.id,
                         installProgress = if (installingId == v.id) progress else null,
                         onInstall = {
-                            installingId = v.id; progress = InstallProgress()
-                            scope.launch(Dispatchers.IO) {
-                                installVersion(v.id, onProgress = { p -> withContext(Dispatchers.Main) { progress = p } })
-                                withContext(Dispatchers.Main) { installingId = null; progress = InstallProgress() }
+                            installingId = v.id
+                            progress = InstallProgress()
+                            scope.launch {
+                                installVersion(v.id, onProgress = { p ->
+                                    withContext(Dispatchers.Main) { progress = p }
+                                })
+                                withContext(Dispatchers.Main) {
+                                    installingId = null
+                                    progress = InstallProgress()
+                                }
                             }
                         }
                     )
@@ -243,24 +250,25 @@ private suspend fun installVersion(versionId: String, onProgress: (InstallProgre
             }
             val objects = JSONObject(idxFile.readText()).optJSONObject("objects")
             if (objects != null) {
-                val keys = objects.keys()
-                val totalAssets = keys.length
+                val keyList = mutableListOf<String>()
+                val it = objects.keys()
+                while (it.hasNext()) keyList.add(it.next())
+                val totalAssets = keyList.size
                 var done = 0
-                while (keys.hasNext()) {
-                    val key = keys.next()
+                for (key in keyList) {
                     val hash = objects.getJSONObject(key).optString("hash")
                     val objFile = assetsDir.resolve("objects/${hash.substring(0, 2)}/$hash")
                     if (!objFile.exists()) {
                         objFile.parentFile?.mkdirs()
                         try { DownloadManager.download(
                             url = "https://resources.download.minecraft.net/${hash.substring(0, 2)}/$hash",
-                            outputPath = objFile.absolutePath, name = key.take(40), description = "资源 $done/$totalAssets"
+                            outputPath = objFile.absolutePath, name = key, description = "资源 $done/$totalAssets"
                         ) } catch (_: Exception) {}
                     }
                     done++
                     if (done % 30 == 0) onProgress(InstallProgress(step = InstallStep.DOWNLOADING_ASSETS,
                         stepName = "下载资源 ($done/$totalAssets)", stepProgress = done.toFloat() / totalAssets,
-                        overallProgress = 0.7f + done.toFloat() / totalAssets * 0.25f, currentFile = key.take(40)))
+                        overallProgress = 0.7f + done.toFloat() / totalAssets * 0.25f, currentFile = key))
                 }
             }
         }
