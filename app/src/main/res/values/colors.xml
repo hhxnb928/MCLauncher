@@ -9,4 +9,5 @@
     <color name="mc_text_secondary">#999999</color>
     <color name="accent_blue">#3B82F6</color>
     <color name="accent_purple">#8B5CF6</color>
+    <color name="ic_launcher_background">#1A1A1A</color>
 </resources>
