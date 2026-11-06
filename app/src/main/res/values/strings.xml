@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MCLauncher</string>
+    <string name="launch">启动游戏</string>
+    <string name="version_manager">版本管理</string>
+    <string name="mod_store">模组商店</string>
+    <string name="skin_manager">皮肤管理</string>
+    <string name="settings">设置</string>
+    <string name="java_settings">Java 设置</string>
+    <string name="keyboard_layout">按键布局</string>
+</resources>
