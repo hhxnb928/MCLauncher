@@ -93,17 +93,19 @@ fun SkinManagerScreen() {
             }
 
             // 添加按钮
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Add, null, tint = MC_TEXT_SECONDARY, modifier = Modifier.size(32.dp))
+            item {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        modifier = Modifier
+                            .size(80.dp)
+                            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Add, null, tint = MC_TEXT_SECONDARY, modifier = Modifier.size(32.dp))
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("添加", color = MC_TEXT_SECONDARY, fontSize = 12.sp)
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text("添加", color = MC_TEXT_SECONDARY, fontSize = 12.sp)
             }
         }
     }
