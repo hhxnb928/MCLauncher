@@ -1,191 +1,173 @@
 package com.mclauncher.mods
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.mclauncher.data.ModrinthMod
+import androidx.compose.ui.unit.sp
 import com.mclauncher.data.ModrinthApi
+import com.mclauncher.data.ModrinthMod
+import com.mclauncher.ui.theme.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ModStoreScreen(
-    onInstall: (ModrinthMod) -> Unit,
-    currentLoader: String = "fabric",
-    currentGameVersion: String = "1.21.1"
-) {
+fun ModStoreScreen() {
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
+    var loaderFilter by remember { mutableStateOf<String?>(null) }
+    var versionFilter by remember { mutableStateOf<String?>(null) }
     var mods by remember { mutableStateOf<List<ModrinthMod>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var selectedCategory by remember { mutableStateOf("all") }
-    
-    val scope = rememberCoroutineScope()
-    
-    val categories = listOf(
-        "all" to "全部",
-        "technology" to "⚙️ 科技",
-        "magic" to "✨ 魔法",
-        "adventure" to "🗺️ 冒险",
-        "food" to "🍔 食物",
-        "automation" to "🤖 自动化",
-        "utility" to "🔧 工具",
-        "minecraft" to "🎮 原版",
-    )
-    
-    LaunchedEffect(Unit) {
-        loading = true
-        try {
-            mods = ModrinthApi.search(
-                query = "",
-                gameVersion = currentGameVersion,
-                loader = currentLoader,
-                limit = 30
-            ).hits
-        } catch (e: Exception) {
-            error = e.message
-        } finally {
+    var downloadProgress by remember { mutableStateOf<Pair<String, Float>?>(null) }
+
+    val load = {
+        scope.launch(Dispatchers.IO) {
+            loading = true; error = null
+            mods = ModrinthApi.search(query = query, loader = loaderFilter, gameVersion = versionFilter)
             loading = false
         }
     }
-    
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
-        // 搜索栏
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it; scope.launch { /* 实时搜索 */ } },
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            placeholder = { Text("搜索模组...", color = Color.Gray) },
-            leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.Gray) },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color(0xFF4DBD2D),
-                unfocusedBorderColor = Color.Gray,
-                cursorColor = Color(0xFF4DBD2D)
-            )
-        )
-        
-        // 分类标签
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(categories) { (key, label) ->
-                FilterChip(
-                    selected = selectedCategory == key,
-                    onClick = { selectedCategory = key },
-                    label = { Text(label) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF4DBD2D),
-                        selectedLabelColor = Color.White
+
+    LaunchedEffect(Unit) { load() }
+
+    Column(modifier = Modifier.fillMaxSize().background(MC_BLACK)) {
+        Surface(modifier = Modifier.fillMaxWidth(), color = Color(0xFF141414)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("🛒 模组商店 (Modrinth)", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(10.dp))
+                // 搜索
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = query, onValueChange = { query = it },
+                        placeholder = { Text("搜索模组...", fontSize = 13.sp) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
                     )
-                )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(onClick = { load() }) { Icon(Icons.Default.Search, null, tint = MC_GREEN) }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                // 过滤器
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(null to "全部", "fabric" to "Fabric", "forge" to "Forge", "neoforge" to "NeoForge").forEach { (ldr, label) ->
+                        FilterChip(
+                            selected = loaderFilter == ldr,
+                            onClick = { loaderFilter = ldr; load() },
+                            label = { Text(label, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MC_GREEN)
+                        )
+                    }
+                }
             }
         }
-        
-        // 模组列表
-        if (loading) {
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                color = Color(0xFF4DBD2D)
-            )
-        }
-        
-        error?.let { err ->
-            Text(
-                "⚠️ $err",
-                modifier = Modifier.padding(16.dp),
-                color = Color.Red
-            )
-        }
-        
-        LazyColumn(
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(mods) { mod ->
-                ModCard(mod = mod, onInstall = { onInstall(mod) })
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (loading) {
+                    item { CircularProgressIndicator(modifier = Modifier.padding(20.dp)) }
+                } else if (error != null) {
+                    item { Text("❌ $error", color = Color.Red, modifier = Modifier.padding(20.dp)) }
+                } else if (mods.isEmpty()) {
+                    item { Text("未找到模组", color = MC_TEXT_SECONDARY, modifier = Modifier.padding(20.dp)) }
+                }
+
+                items(mods) { mod ->
+                    ModCard(
+                        mod = mod,
+                        onDownload = {
+                            scope.launch(Dispatchers.IO) {
+                                downloadProgress = mod.title to 0f
+                                val path = ModrinthApi.getMod(mod.slug)?.let { full ->
+                                    full.latestVersionUrl?.let { url ->
+                                        ModrinthApi.downloadMod(full, "", onProgress = { downloadProgress = mod.title to it })
+                                    }
+                                }
+                                downloadProgress = null
+                            }
+                        },
+                        downloading = downloadProgress?.first == mod.title,
+                        progress = downloadProgress?.second ?: 0f
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun ModCard(mod: ModrinthMod, onInstall: () -> Unit) {
+fun ModCard(
+    mod: ModrinthMod,
+    onDownload: () -> Unit,
+    downloading: Boolean,
+    progress: Float
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
         Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.Top
         ) {
-            // 图标（用 emoji 占位或网络加载）
             Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .background(Color(0xFF4DBD2D), RoundedCornerShape(12.dp)),
+                modifier = Modifier.size(48.dp).background(MC_YELLOW.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Text("📦", fontSize = MaterialTheme.typography.headlineMedium.fontSize)
+                Icon(Icons.Default.Extension, null, tint = MC_YELLOW, modifier = Modifier.size(28.dp))
             }
-            
-            Spacer(modifier = Modifier.width(12.dp))
-            
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    mod.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White
-                )
-                Text(
-                    buildString {
-                        append("⬇️ ${formatDownloads(mod.downloads)}")
-                        if (mod.follows > 0) append("   ⭐ ${mod.follows}")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
-                )
-                Text(
-                    mod.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFB0B0B0),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Text(mod.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(mod.description, color = MC_TEXT_SECONDARY, fontSize = 12.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    mod.loader.forEach { l ->
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(l, fontSize = 10.sp) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = MC_GREEN.copy(alpha = 0.2f))
+                        )
+                    }
+                    Text("⬇️ ${(mod.downloads / 1000f).toInt()}K", color = MC_TEXT_SECONDARY, fontSize = 11.sp)
+                }
             }
-            
             Spacer(modifier = Modifier.width(8.dp))
-            
-            Button(
-                onClick = onInstall,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4DBD2D))
-            ) {
-                Icon(Icons.Default.Download, null, modifier = Modifier.height(18.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("下载")
+            if (downloading) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 2.dp)
+                    Text("${(progress*100).toInt()}%", color = MC_GREEN, fontSize = 10.sp)
+                }
+            } else {
+                FilledTonalButton(
+                    onClick = onDownload,
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MC_GREEN.copy(alpha = 0.2f), contentColor = MC_GREEN)
+                ) {
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("下载", fontSize = 13.sp)
+                }
             }
         }
     }
-}
-
-private fun formatDownloads(n: Long): String = when {
-    n >= 1_000_000_000 -> "${n / 1_000_000_000}亿+"
-    n >= 10_000_000 -> "${n / 10_000}万+"
-    n >= 10_000 -> "${n / 1000}K+"
-    else -> n.toString()
 }
