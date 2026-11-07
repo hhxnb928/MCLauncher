@@ -1,6 +1,7 @@
 package com.mclauncher.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,105 +20,128 @@ import com.mclauncher.data.*
 import com.mclauncher.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 
 enum class InstallStep {
-    IDLE, CACHING_MANIFEST, DOWNLOADING_CLIENT, DOWNLOADING_LIBS,
-    DOWNLOADING_ASSETS, DONE, ERROR
+    CACHING_MANIFEST, DOWNLOADING_CLIENT, DOWNLOADING_LIBRARIES,
+    DOWNLOADING_ASSETS, DOWNLOADING_LOADER, COMPLETE, ERROR
 }
 
 data class InstallProgress(
-    val step: InstallStep = InstallStep.IDLE,
-    val stepName: String = "",
+    val step: InstallStep,
+    val stepName: String,
     val stepProgress: Float = 0f,
     val overallProgress: Float = 0f,
-    val speedBytesPerSec: Float = 0f,
-    val currentFile: String = ""
+    val message: String = ""
 )
+
+enum class LoaderChoice { NONE, FABRIC, FORGE, NEOFORGE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VersionManagerScreen() {
-    var manifest by remember { mutableStateOf<MojangVersionManifest?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var tabIndex by remember { mutableStateOf(0) }
-    var installingId by remember { mutableStateOf<String?>(null) }
-    val progress = remember { mutableStateOf(InstallProgress()) }
     val scope = rememberCoroutineScope()
-    val tabs = listOf("Release", "Snapshot", "旧版")
+    var versions by remember { mutableStateOf<List<MojangVersion>>(emptyList()) }
+    var installed by remember { mutableStateOf<List<LocalVersion>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var installProgress by remember { mutableStateOf<InstallProgress?>(null) }
+    var showLoaderPicker by remember { mutableStateOf<MojangVersion?>(null) }
 
-    LaunchedEffect(Unit) {
-        loading = true
-        try { manifest = MojangApi.fetchManifest() }
-        catch (e: Exception) { error = e.message }
-        finally { loading = false }
-    }
+    LaunchedEffect(Unit) { refreshAll { versions = it } }
+    LaunchedEffect(Unit) { installed = loadInstalled() }
 
-    Column(modifier = Modifier.fillMaxSize().background(MC_BLACK).padding(24.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("📦 版本管理", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = {
-                scope.launch {
-                    loading = true; manifest = null
-                    try { manifest = MojangApi.fetchManifest() }
-                    catch (e: Exception) { error = e.message }
-                    finally { loading = false }
+    Column(modifier = Modifier.fillMaxSize().background(MC_BLACK)) {
+        // 顶部栏
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFF141414),
+            shape = RoundedCornerShape(0.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📦 版本管理", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = {
+                    scope.launch { refreshAll { versions = it }; installed = loadInstalled() }
+                }) { Icon(Icons.Default.Refresh, null, tint = MC_GREEN) }
+            }
+        }
+
+        // 安装进度
+        installProgress?.let { p ->
+            InstallProgressCard(p)
+        }
+
+        // 主区域 - 可滚动
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // === 已安装版本分组 ===
+                item {
+                    Text("✅ 已安装 (${installed.size})", color = MC_GREEN, fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
                 }
-            }) { Icon(Icons.Default.Refresh, null, tint = MC_TEXT_SECONDARY) }
-        }
+                if (installed.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                        ) {
+                            Text("  暂无已安装版本, 下方选一个安装 →", color = MC_TEXT_SECONDARY,
+                                modifier = Modifier.padding(20.dp), fontSize = 13.sp)
+                        }
+                    }
+                } else {
+                    items(installed) { lv ->
+                        InstalledVersionCard(
+                            version = lv,
+                            onUninstall = {
+                                scope.launch(Dispatchers.IO) {
+                                    uninstallVersion(lv)
+                                    installed = loadInstalled()
+                                }
+                            }
+                        )
+                    }
+                }
 
-        TabRow(selectedTabIndex = tabIndex, containerColor = Color(0xFF1E1E1E), contentColor = MC_GREEN) {
-            tabs.forEachIndexed { idx, label ->
-                Tab(selected = tabIndex == idx, onClick = { tabIndex = idx }, text = { Text(label) })
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
+                item { Spacer(modifier = Modifier.height(8.dp)) }
+                item {
+                    Text("📥 可安装版本 (Mojang)", color = MC_TEXT_SECONDARY, fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+                }
 
-        if (loading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = MC_GREEN)
-            }
-            return@Column
-        }
-        error?.let {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("⚠️ $it", color = Color.Red)
-            }
-            return@Column
-        }
+                if (versions.isEmpty() && !loading) {
+                    item {
+                        Text("加载中...", color = MC_TEXT_SECONDARY,
+                            modifier = Modifier.padding(20.dp))
+                    }
+                }
 
-        if (installingId != null) {
-            InstallProgressCard(progress = progress.value)
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        manifest?.let { mf ->
-            val filtered = mf.versions.filter { v ->
-                when (tabIndex) { 0 -> v.type == "release"; 1 -> v.type == "snapshot"
-                    else -> v.type != "release" && v.type != "snapshot" }
-            }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { Text("共 ${filtered.size} 个版本", color = MC_TEXT_SECONDARY, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
-                items(filtered.take(50)) { v ->
-                    VersionRow(
+                items(versions) { v ->
+                    val isInstalled = installed.any { it.id == v.id }
+                    MojangVersionCard(
                         version = v,
-                        isLatest = v.id == mf.latest.release || v.id == mf.latest.snapshot,
-                        isInstalling = installingId == v.id,
-                        installProgress = if (installingId == v.id) progress.value else null,
+                        isInstalled = isInstalled,
+                        installProgress = installProgress,
                         onInstall = {
-                            installingId = v.id
-                            progress.value = InstallProgress()
+                            showLoaderPicker = v
+                        },
+                        onUninstall = {
                             scope.launch(Dispatchers.IO) {
-                                installVersion(v.id, onProgress = { p -> progress.value = p })
-                                installingId = null
-                                progress.value = InstallProgress()
+                                installed.firstOrNull { it.id == v.id }?.let { uninstallVersion(it) }
+                                installed = loadInstalled()
                             }
                         }
                     )
@@ -125,57 +149,130 @@ fun VersionManagerScreen() {
             }
         }
     }
+
+    // 加载器选择对话框
+    showLoaderPicker?.let { v ->
+        LoaderPickerDialog(
+            mcVersion = v.id,
+            onConfirm = { loader ->
+                showLoaderPicker = null
+                scope.launch(Dispatchers.IO) {
+                    installVersion(v.id, loader, onProgress = { installProgress = it })
+                    installed = loadInstalled()
+                    installProgress = null
+                }
+            },
+            onDismiss = { showLoaderPicker = null }
+        )
+    }
 }
 
+// ========== 已安装版本卡片 (显示删除) ==========
 @Composable
-fun InstallProgressCard(progress: InstallProgress) {
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2A1E))) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MC_GREEN, strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(progress.stepName.ifEmpty { "正在安装..." }, color = MC_GREEN, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    if (progress.currentFile.isNotEmpty()) Text(progress.currentFile, color = MC_TEXT_SECONDARY, fontSize = 11.sp, maxLines = 1)
-                }
-                Text("${(progress.overallProgress * 100).toInt()}%", color = MC_GREEN, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+fun InstalledVersionCard(
+    version: LocalVersion,
+    onUninstall: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp).background(MC_GREEN.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.CheckCircle, null, tint = MC_GREEN, modifier = Modifier.size(24.dp))
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            LinearProgressIndicator(progress = { progress.overallProgress },
-                modifier = Modifier.fillMaxWidth().height(8.dp), color = MC_GREEN, trackColor = Color(0xFF2A2A2A))
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Text(progress.stepName, color = MC_TEXT_SECONDARY, fontSize = 11.sp)
-                Spacer(modifier = Modifier.weight(1f))
-                val kb = progress.speedBytesPerSec / 1024f
-                if (kb > 10) Text("${kb.toInt()} KB/s", color = MC_TEXT_SECONDARY, fontSize = 11.sp)
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(version.id, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("✅ 已安装", color = MC_GREEN, fontSize = 11.sp)
+            }
+            OutlinedButton(
+                onClick = onUninstall,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("删除", fontSize = 13.sp)
             }
         }
     }
 }
 
+// ========== Mojang 版本卡片 ==========
 @Composable
-fun VersionRow(version: MojangVersion, isLatest: Boolean, isInstalling: Boolean,
-               installProgress: InstallProgress?, onInstall: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))) {
-        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(version.id, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    if (isLatest) { Spacer(modifier = Modifier.width(8.dp))
-                        Badge(containerColor = Color(0xFFFFD700)) { Text("最新", fontSize = 10.sp, color = Color.Black) } }
-                }
-                Text("📅 ${version.releaseTime.substringBefore('T')}", color = MC_TEXT_SECONDARY, fontSize = 12.sp)
+fun MojangVersionCard(
+    version: MojangVersion,
+    isInstalled: Boolean,
+    installProgress: InstallProgress?,
+    onInstall: () -> Unit,
+    onUninstall: () -> Unit
+) {
+    val installing = installProgress != null &&
+        installProgress.message.contains(version.id) ||
+        installProgress?.step == InstallStep.DOWNLOADING_CLIENT
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isInstalled) Color(0xFF222A22) else Color(0xFF1E1E1E)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp).background(
+                    if (version.type == "release") MC_GREEN.copy(alpha = 0.2f)
+                    else MC_YELLOW.copy(alpha = 0.2f),
+                    RoundedCornerShape(10.dp)
+                ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (version.type == "release") "R" else "S",
+                    color = if (version.type == "release") MC_GREEN else MC_YELLOW,
+                    fontSize = 16.sp, fontWeight = FontWeight.Bold
+                )
             }
-            if (isInstalling && installProgress != null) {
-                Button(onClick = {}, enabled = false, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MC_GREEN, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("${(installProgress.overallProgress * 100).toInt()}%", fontSize = 12.sp)
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(version.id, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text(if (version.type == "release") "Release" else "Snapshot", fontSize = 10.sp) },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF2A2A2A))
+                    )
                 }
+            }
+            if (isInstalled) {
+                OutlinedButton(
+                    onClick = onUninstall,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.Delete, null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("删除", fontSize = 13.sp)
+                }
+            } else if (installing) {
+                CircularProgressIndicator(color = MC_GREEN, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
             } else {
-                Button(onClick = onInstall, colors = ButtonDefaults.buttonColors(containerColor = MC_GREEN), shape = RoundedCornerShape(8.dp)) {
+                Button(
+                    onClick = onInstall,
+                    colors = ButtonDefaults.buttonColors(containerColor = MC_GREEN),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
                     Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("安装", fontSize = 13.sp)
@@ -185,98 +282,174 @@ fun VersionRow(version: MojangVersion, isLatest: Boolean, isInstalling: Boolean,
     }
 }
 
-private suspend fun installVersion(versionId: String, onProgress: (InstallProgress) -> Unit) {
+// ========== 安装进度卡片 ==========
+@Composable
+fun InstallProgressCard(progress: InstallProgress) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MC_GREEN.copy(alpha = 0.12f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text("📥 ${progress.stepName}", color = MC_GREEN, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { progress.overallProgress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(6.dp),
+                color = MC_GREEN, trackColor = Color(0xFF2A2A2A)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${(progress.overallProgress * 100).toInt()}% | ${progress.message}",
+                color = MC_TEXT_SECONDARY, fontSize = 11.sp
+            )
+        }
+    }
+}
+
+// ========== 加载器选择对话框 ==========
+@Composable
+fun LoaderPickerDialog(
+    mcVersion: String,
+    onConfirm: (LoaderChoice) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("安装 Minecraft $mcVersion") },
+        text = {
+            Column {
+                Text("选择模组加载器 (或不选 = 原版)", color = MC_TEXT_SECONDARY, fontSize = 13.sp)
+                Spacer(modifier = Modifier.height(12.dp))
+                val options = listOf(
+                    LoaderChoice.NONE to "原版 (Vanilla)",
+                    LoaderChoice.FABRIC to "Fabric Loader (推荐)",
+                    LoaderChoice.FORGE to "Forge",
+                    LoaderChoice.NEOFORGE to "NeoForge"
+                )
+                options.forEach { (l, label) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { onConfirm(l) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = false, onClick = { onConfirm(l) })
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(label, color = Color.White, fontSize = 14.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+// ========== 辅助函数 ==========
+suspend fun refreshAll(onDone: (List<MojangVersion>) -> Unit) {
+    onDone(MojangApi.fetchManifest().versions.filter { it.type == "release" }.take(20))
+}
+
+suspend fun loadInstalled(): List<LocalVersion> = withContext(Dispatchers.IO) {
     try {
-        onProgress(InstallProgress(step = InstallStep.CACHING_MANIFEST, stepName = "下载版本清单..."))
-        
-        // 修: cacheVersionJson 返回 File, 需要 readText()
+        val dir = com.mclauncher.MCApplication.versionsDir()
+        dir.listFiles()?.filter { it.isDirectory }?.map { d ->
+            val jsonFile = File(d, "${d.name}.json")
+            val type = if (jsonFile.exists()) {
+                try { JSONObject(jsonFile.readText()).optString("type", "custom") } catch (_: Exception) { "custom" }
+            } else "custom"
+            LocalVersion(id = d.name, type = type, installed = true)
+        }?.sortedByDescending { it.id } ?: emptyList()
+    } catch (e: Exception) { emptyList() }
+}
+
+fun uninstallVersion(version: LocalVersion) {
+    val dir = File(com.mclauncher.MCApplication.versionsDir(), version.id)
+    if (dir.exists()) dir.deleteRecursively()
+}
+
+suspend fun installVersion(
+    versionId: String,
+    loader: LoaderChoice,
+    onProgress: (InstallProgress) -> Unit
+) {
+    val versionsDir = com.mclauncher.MCApplication.versionsDir()
+    val versionDir = File(versionsDir, versionId)
+    versionDir.mkdirs()
+
+    try {
+        // 1. 缓存版本 JSON
+        onProgress(InstallProgress(InstallStep.CACHING_MANIFEST, "下载版本清单...", overallProgress = 0.02f, message = versionId))
         val jsonFile = MojangApi.cacheVersionJson(versionId)
         if (!jsonFile.exists()) {
-            onProgress(InstallProgress(step = InstallStep.ERROR, stepName = "版本清单下载失败")); return
+            onProgress(InstallProgress(InstallStep.ERROR, "版本清单下载失败")); return
         }
-        val versionJson = JSONObject(jsonFile.readText())
 
-        onProgress(InstallProgress(step = InstallStep.DOWNLOADING_CLIENT, stepName = "下载游戏主包...", overallProgress = 0.05f))
-        val clientUrl = versionJson.optJSONObject("downloads")?.optJSONObject("client")?.optString("url")
-        if (clientUrl != null) {
-            val clientFile = com.mclauncher.MCApplication.versionsDir().resolve("$versionId/$versionId.jar")
-            clientFile.parentFile?.mkdirs()
+        val json = JSONObject(jsonFile.readText())
+        val clientUrl = json.optJSONObject("downloads")?.optJSONObject("client")?.optString("url") ?: ""
+        val clientSize = json.optJSONObject("downloads")?.optJSONObject("client")?.optLong("size", 0) ?: 0
+        val assetIndexId = json.optJSONObject("assetIndex")?.optString("id") ?: versionId
+        val assetIndexUrl = json.optJSONObject("assetIndex")?.optString("url") ?: ""
+
+        // 2. 下载客户端 jar
+        if (clientUrl.isNotEmpty()) {
+            onProgress(InstallProgress(InstallStep.DOWNLOADING_CLIENT, "下载游戏主包...", overallProgress = 0.1f, message = "${versionId}.jar"))
+            val clientFile = File(versionDir, "$versionId.jar")
             if (!clientFile.exists()) {
-                DownloadManager.download(url = clientUrl, outputPath = clientFile.absolutePath,
-                    name = "$versionId.jar", description = "游戏主包",
-                    onProgress = { p, _, _ -> onProgress(InstallProgress(step = InstallStep.DOWNLOADING_CLIENT,
-                        stepName = "下载游戏主包", stepProgress = p, overallProgress = 0.05f + p * 0.15f)) })
-            }
-        }
-
-        onProgress(InstallProgress(step = InstallStep.DOWNLOADING_LIBS, stepName = "下载依赖库...", overallProgress = 0.2f))
-        val libs = versionJson.optJSONArray("libraries")
-        if (libs != null) {
-            val totalLibs = libs.length()
-            for (i in 0 until totalLibs) {
-                val lib = libs.getJSONObject(i)
-                val artifact = lib.optJSONObject("downloads")?.optJSONObject("artifact") ?: continue
-                val url = artifact.optString("url") ?: continue
-                val path = artifact.optString("path") ?: continue
-                val rules = lib.optJSONArray("rules")
-                if (rules != null) {
-                    var disallowed = false
-                    for (j in 0 until rules.length()) {
-                        if (rules.getJSONObject(j).optString("action") == "disallow") {
-                            val os = rules.getJSONObject(j).optJSONObject("os")
-                            if (os == null || os.optString("name") == "linux") disallowed = true
-                        }
-                    }
-                    if (disallowed) continue
-                }
-                val outFile = com.mclauncher.MCApplication.librariesDir().resolve(path)
-                if (outFile.exists() && outFile.length() > 0) continue
-                try {
-                    DownloadManager.download(url = url, outputPath = outFile.absolutePath,
-                        name = path.substringAfterLast("/"), description = "库 ${i+1}/$totalLibs",
-                        onProgress = { p, _, _ -> onProgress(InstallProgress(step = InstallStep.DOWNLOADING_LIBS,
-                            stepName = "下载依赖库 (${i+1}/$totalLibs)", stepProgress = (i + p) / totalLibs,
-                            overallProgress = 0.2f + (i + p) / totalLibs * 0.5f, currentFile = path.substringAfterLast("/"))) })
-                } catch (_: Exception) {}
-            }
-        }
-
-        onProgress(InstallProgress(step = InstallStep.DOWNLOADING_ASSETS, stepName = "下载资源文件...", overallProgress = 0.7f))
-        val assetIndex = versionJson.optJSONObject("assetIndex")
-        if (assetIndex != null) {
-            val assetsDir = com.mclauncher.MCApplication.assetsDir()
-            val idxFile = assetsDir.resolve("indexes/$versionId.json")
-            idxFile.parentFile?.mkdirs()
-            if (!idxFile.exists()) {
-                DownloadManager.download(url = assetIndex.optString("url"), outputPath = idxFile.absolutePath,
-                    name = "$versionId.json", description = "资源索引")
-            }
-            val objects = JSONObject(idxFile.readText()).optJSONObject("objects")
-            if (objects != null) {
-                val keyList = mutableListOf<String>()
-                val iterator = objects.keys()
-                while (iterator.hasNext()) keyList.add(iterator.next())
-                val totalAssets = keyList.size
-                var done = 0
-                for (key in keyList) {
-                    val hash = objects.getJSONObject(key).optString("hash")
-                    val objFile = assetsDir.resolve("objects/${hash.substring(0, 2)}/$hash")
-                    if (!objFile.exists()) {
-                        objFile.parentFile?.mkdirs()
-                        try { DownloadManager.download(
-                            url = "https://resources.download.minecraft.net/${hash.substring(0, 2)}/$hash",
-                            outputPath = objFile.absolutePath, name = key, description = "资源 $done/$totalAssets"
-                        ) } catch (_: Exception) {}
-                    }
-                    done++
-                    if (done % 30 == 0) onProgress(InstallProgress(step = InstallStep.DOWNLOADING_ASSETS,
-                        stepName = "下载资源 ($done/$totalAssets)", stepProgress = done.toFloat() / totalAssets,
-                        overallProgress = 0.7f + done.toFloat() / totalAssets * 0.25f, currentFile = key))
+                DownloadManager.download(
+                    url = clientUrl, outputPath = clientFile.absolutePath,
+                    name = "$versionId.jar", description = "Client"
+                ) { p, _, _ ->
+                    onProgress(InstallProgress(InstallStep.DOWNLOADING_CLIENT, "下载游戏主包...", stepProgress = p, overallProgress = 0.1f + p * 0.25f, message = "${(p*100).toInt()}%"))
                 }
             }
         }
-        onProgress(InstallProgress(step = InstallStep.DONE, stepName = "✅ 安装完成!", overallProgress = 1f))
+
+        // 3. 下载 libraries
+        onProgress(InstallProgress(InstallStep.DOWNLOADING_LIBRARIES, "下载依赖库...", overallProgress = 0.35f))
+        LibraryDownloader.downloadForVersion(json) { p, name ->
+            onProgress(InstallProgress(InstallStep.DOWNLOADING_LIBRARIES, "下载依赖库... ($name)", stepProgress = p, overallProgress = 0.35f + p * 0.3f))
+        }
+
+        // 4. 下载 assets
+        onProgress(InstallProgress(InstallStep.DOWNLOADING_ASSETS, "下载资源文件...", overallProgress = 0.65f))
+        if (assetIndexUrl.isNotEmpty()) {
+            val indexFile = File(com.mclauncher.MCApplication.assetsDir(), "indexes/$assetIndexId.json")
+            indexFile.parentFile?.mkdirs()
+            DownloadManager.download(assetIndexUrl, indexFile.absolutePath, "$assetIndexId.json", "Asset Index") { _, _, _ -> }
+
+            try {
+                val indexJson = JSONObject(indexFile.readText())
+                val assets = indexJson.optJSONObject("objects")
+                var count = 0; val total = assets?.length() ?: 1
+                assets?.keys()?.forEach { name ->
+                    val obj = assets.getJSONObject(name)
+                    val hash = obj.getString("hash")
+                    val prefix = hash.take(2)
+                    val outFile = File(com.mclauncher.MCApplication.assetsDir(), "objects/$prefix/$hash")
+                    if (!outFile.exists()) {
+                        val url = "https://resources.download.minecraft.net/$prefix/$hash"
+                        DownloadManager.download(url, outFile.absolutePath, name, "Asset") { _, _, _ -> }
+                    }
+                    count++
+                    if (count % 20 == 0) {
+                        val p = count.toFloat() / total
+                        onProgress(InstallProgress(InstallStep.DOWNLOADING_ASSETS, "下载资源 $count/$total", stepProgress = p, overallProgress = 0.65f + p * 0.3f))
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 5. 下载加载器
+        if (loader != LoaderChoice.NONE) {
+            onProgress(InstallProgress(InstallStep.DOWNLOADING_LOADER, "下载模组加载器...", overallProgress = 0.95f))
+            val ldr = LoaderManager.Loader.valueOf(loader.name)
+            LoaderManager.downloadLoader(ldr, "", versionId) { p, _, _ ->
+                onProgress(InstallProgress(InstallStep.DOWNLOADING_LOADER, "下载加载器...", stepProgress = p, overallProgress = 0.95f))
+            }
+        }
+
+        onProgress(InstallProgress(InstallStep.COMPLETE, "✅ 安装完成!", overallProgress = 1f, message = versionId))
     } catch (e: Exception) {
-        onProgress(InstallProgress(step = InstallStep.ERROR, stepName = "❌ 错误: ${e.message}"))
+        onProgress(InstallProgress(InstallStep.ERROR, "安装失败: ${e.message}", overallProgress = 0f))
     }
 }
