@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import com.mclauncher.game.GameActivity
 import com.mclauncher.keyboard.KeyboardMapperActivity
 import com.mclauncher.mods.ModStoreScreen
+import com.mclauncher.ui.ModManagerScreen
 import com.mclauncher.ui.theme.*
 
 class MainActivity : ComponentActivity() {
@@ -89,7 +90,8 @@ class MainActivity : ComponentActivity() {
 enum class Page(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     HOME("启动", Icons.Default.Home),
     VERSIONS("版本", Icons.Default.Inventory2),
-    MODS("模组", Icons.Default.Extension),
+    MODS_STORE("🛒 模组商店", Icons.Default.Extension),
+    MOD_MANAGE("📁 模组管理", Icons.Default.Folder),
     SKINS("皮肤", Icons.Default.Person),
     KEYBOARD("按键", Icons.Default.Keyboard),
     SETTINGS("设置", Icons.Default.Settings)
@@ -115,7 +117,8 @@ fun LauncherScaffold(
             when (currentPage) {
                 Page.HOME -> HomeScreen(onLaunchGame = onLaunchGame)
                 Page.VERSIONS -> VersionManagerScreen()
-                Page.MODS -> ModStoreScreen(onInstall = { /* 安装逻辑 */ })
+                Page.MODS_STORE -> ModStoreScreen()
+                Page.MOD_MANAGE -> ModManagerScreen()
                 Page.SKINS -> SkinManagerScreen()
                 Page.KEYBOARD -> KeyboardScreen(onOpenEditor = onOpenKeyboardMapper)
                 Page.SETTINGS -> SettingsScreen()
