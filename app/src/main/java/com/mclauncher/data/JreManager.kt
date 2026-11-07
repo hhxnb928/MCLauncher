@@ -58,7 +58,7 @@ object JreManager {
             else -> return false
         }
         val target = jreDir(version)
-        val tmpFile = File(jresDir, "$version.tar.xz")
+        val tmpFile = File(jresDir, "jre.tar.xz")
         
         if (isInstalled(version)) { onProgress(1f, 0, 1); return true }
         
@@ -69,7 +69,7 @@ object JreManager {
             DownloadManager.download(
                 url = url,
                 outputPath = tmpFile.absolutePath,
-                name = "$version.tar.xz",
+                name = "jre.tar.xz",
                 description = "Java Runtime $version",
                 onProgress = onProgress
             )
@@ -111,8 +111,8 @@ object JreManager {
             } catch (_: Exception) {
                 // 没有系统 xz/tar, 手动解压 (简单提示)
                 File(targetDir, "README.txt").writeText(
-                    "请手动解压 $version.tar.xz 到本目录\n" +
-                    "需要: tar -xJf jre$version.tar.xz -C .\n"
+                    "请手动解压 jre.tar.xz 到本目录\n" +
+                    "需要: tar -xJf jrejre.tar.xz -C .\n"
                 )
             }
         }
